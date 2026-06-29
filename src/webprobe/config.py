@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class AuthCredential(BaseModel):
@@ -59,10 +59,70 @@ class CaptureConfig(BaseModel):
 
 
 _ALL_STANDARDS = [
-    "owasp_top10_2021", "iso_27001", "soc2", "fedramp", "hipaa",
-    "pci_dss", "nist_csf", "gdpr_ccpa", "ofac", "cia_triad",
+    "owasp_top10_2021", "iso_27001_2022", "soc2", "fedramp_rev5", "hipaa",
+    "pci_dss_v4", "nist_csf_2", "gdpr_ccpa", "ofac", "cia_triad",
     "privacy_by_design", "access_control", "data_breach_notification", "cjis",
 ]
+
+_STANDARD_ALIASES = {
+    "all": "all",
+    "owasp": "owasp_top10_2021",
+    "owasp_top10": "owasp_top10_2021",
+    "owasp_top10_2021": "owasp_top10_2021",
+    "iso": "iso_27001_2022",
+    "iso27001": "iso_27001_2022",
+    "iso_27001": "iso_27001_2022",
+    "iso_27001_2022": "iso_27001_2022",
+    "soc": "soc2",
+    "soc2": "soc2",
+    "soc_2": "soc2",
+    "fedramp": "fedramp_rev5",
+    "fedramp_rev5": "fedramp_rev5",
+    "hipaa": "hipaa",
+    "hippa": "hipaa",
+    "pci": "pci_dss_v4",
+    "pci_dss": "pci_dss_v4",
+    "pci_dss_v4": "pci_dss_v4",
+    "nist": "nist_csf_2",
+    "nist_csf": "nist_csf_2",
+    "nist_csf_2": "nist_csf_2",
+    "gdpr": "gdpr_ccpa",
+    "ccpa": "gdpr_ccpa",
+    "gdpr_ccpa": "gdpr_ccpa",
+    "ofac": "ofac",
+    "cia": "cia_triad",
+    "cia_triad": "cia_triad",
+    "privacy": "privacy_by_design",
+    "privacy_by_design": "privacy_by_design",
+    "access_control": "access_control",
+    "data_breach": "data_breach_notification",
+    "data_breach_notification": "data_breach_notification",
+    "cjis": "cjis",
+}
+
+
+def normalize_compliance_standards(value: str | list[str] | None) -> list[str]:
+    """Normalize user-facing compliance names to bundled mapping keys."""
+    if value is None:
+        return list(_ALL_STANDARDS)
+    if isinstance(value, str):
+        raw_items = [item.strip() for item in value.replace(";", ",").split(",")]
+    else:
+        raw_items = [str(item).strip() for item in value]
+
+    normalized: list[str] = []
+    for item in raw_items:
+        if not item:
+            continue
+        key = item.lower().replace("-", "_").replace(" ", "_").replace(".", "_")
+        mapped = _STANDARD_ALIASES.get(key)
+        if mapped is None:
+            raise ValueError(f"Unknown compliance standard: {item}")
+        if mapped == "all":
+            return list(_ALL_STANDARDS)
+        if mapped not in normalized:
+            normalized.append(mapped)
+    return normalized or list(_ALL_STANDARDS)
 
 _DEFAULT_SENSITIVE_PATHS = [
     "/.env", "/.env.local", "/.env.production",
@@ -89,6 +149,18 @@ class ComplianceConfig(BaseModel):
     include_untestable: bool = True
     custom_mappings_path: str = ""
 
+    @field_validator("standards")
+    @classmethod
+    def _normalize_standards(cls, v: list[str]) -> list[str]:
+        return normalize_compliance_standards(v)
+
+    @field_validator("skip_standards")
+    @classmethod
+    def _normalize_skip_standards(cls, v: list[str]) -> list[str]:
+        if not v:
+            return []
+        return normalize_compliance_standards(v)
+
 
 class SecurityConfig(BaseModel):
     """Extended security check configuration."""
@@ -97,6 +169,35 @@ class SecurityConfig(BaseModel):
     tls_check: bool = True
     sensitive_file_detection: bool = True
     sensitive_file_paths: list[str] = Field(default_factory=lambda: list(_DEFAULT_SENSITIVE_PATHS))
+
+
+class SourceAnalysisConfig(BaseModel):
+    """Repository/source analysis configuration."""
+
+    enabled: bool = False
+    max_file_bytes: int = 1_000_000
+    include_patterns: list[str] = Field(default_factory=list)
+    exclude_dirs: list[str] = Field(default_factory=lambda: [
+        ".git", ".hg", ".svn", ".kin",
+        "node_modules", ".venv", "venv", "__pycache__",
+        "dist", "build", "coverage", ".next",
+        "webprobe-runs", "runs",
+    ])
+    exclude_patterns: list[str] = Field(default_factory=list)
+
+
+class RuntimeCanaryConfig(BaseModel):
+    """Safe runtime input canary probing configuration."""
+
+    enabled: bool = False
+    max_inputs: int = 50
+    concurrency: int = 4
+    timeout_ms: int = 10000
+    include_links: bool = True
+    include_get_forms: bool = True
+    methods: list[str] = Field(default_factory=lambda: ["GET"])
+    user_agent: str = "webprobe-canary/0.6"
+    canary_prefix: str = "wp_canary"
 
 
 class WebprobeConfig(BaseModel):
@@ -108,6 +209,8 @@ class WebprobeConfig(BaseModel):
     output_dir: str = "./webprobe-runs"
     compliance: ComplianceConfig = Field(default_factory=ComplianceConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
+    source_analysis: SourceAnalysisConfig = Field(default_factory=SourceAnalysisConfig)
+    runtime_canary: RuntimeCanaryConfig = Field(default_factory=RuntimeCanaryConfig)
 
     @model_validator(mode="after")
     def _force_js_for_localstorage_auth(self) -> WebprobeConfig:

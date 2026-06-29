@@ -11,13 +11,22 @@ playwright install chromium
 # Full mechanical scan (no LLM, no API keys needed)
 webprobe run https://your-site.com
 
+# Repository/source scan (no live site needed)
+webprobe scan-repo /path/to/repo
+
+# Runtime crawl plus source analysis in one report
+webprobe run https://your-site.com --project-root /path/to/repo --source-scan
+
+# Runtime crawl plus safe input canary probing
+webprobe run https://your-site.com --canary-probe
+
 # With LLM exploration (requires ANTHROPIC_API_KEY)
 webprobe run https://your-site.com --explore --agents 5
 ```
 
 ## What It Does
 
-Five phases, each runnable independently or as a pipeline:
+Core phases, each runnable independently or as a pipeline:
 
 ### Phase 1: Map
 BFS crawl via `robots.txt`, sitemap chain, and link following. Two passes: anonymous and authenticated. Optional framework route detection (Astro, Next.js, SvelteKit).
@@ -33,6 +42,16 @@ Playwright headless browser visits every node. Captures per page:
 
 ### Phase 3: Analyze
 Graph metrics (cyclomatic complexity, edge coverage, orphans, dead ends), broken link detection, auth boundary violations, timing outliers (z-score), prime path enumeration.
+
+### Phase 3b: Source Analyze
+Optional repository/source scan. Runs standalone with `webprobe scan-repo <path>` or inside a live run with `webprobe run <url> --project-root <path> --source-scan`.
+
+Detects secrets, weak crypto/hash use, SQL/shell/eval/HTML sinks, request-controlled source-to-sink proximity, client-controlled privilege fields, tenant/object IDs accepted from request input, AI prompt-injection surfaces, debug mode, wildcard CORS, and wildcard host allow-lists. Findings include source path, line, rule id, confidence, and redacted evidence. Test/example/fixture paths are downgraded rather than treated as production proof by default.
+
+### Phase 3c: Runtime Canary Probe
+Optional active input analysis. Runs inside a live crawl with `webprobe run <url> --canary-probe` or against an existing captured run with `webprobe canary <run-dir>`.
+
+The default probe is GET-only. It discovers query parameters and GET form inputs, sends harmless unique marker values, and classifies redirect influence, server/parser errors, raw reflection, script-context reflection, HTML tag/attribute reflection, escaped reflection, URL-encoded reflection, and JSON/body reflection. It does not send destructive SQL/XSS payloads and does not POST by default.
 
 ### Phase 4: Report
 JSON (stable schema for aggregation) + HTML (dark theme, summary cards, sortable tables, per-node detail with expandable resources/console/security/screenshots).
@@ -68,6 +87,8 @@ webprobe run <url> --explore           # Include LLM exploration
 webprobe map <url>                     # Phase 1 only
 webprobe capture <run-dir>             # Phase 2 only
 webprobe analyze <run-dir>             # Phase 3 only
+webprobe scan-repo <path>              # Source analysis only
+webprobe canary <run-dir>              # Runtime canary probe on an existing run
 webprobe report <run-dir>              # Phase 4 only
 webprobe explore <run-dir>             # Phase 5 only
 webprobe diff <run-a> <run-b>          # Compare two runs
@@ -78,7 +99,10 @@ webprobe status <run-dir>              # Run summary
 
 ```
 --config PATH          Path to webprobe.yaml
+--compliance LIST      Standards to map findings to (e.g. SOC2,ISO,CJIS,HIPAA)
 --project-root PATH    Project root for framework route detection
+--source-scan          Run source analysis against --project-root
+--canary-probe         Send safe runtime canaries through discovered GET inputs
 --output-dir PATH      Output directory for runs
 --concurrency N        Override capture concurrency (default: 10)
 --explore              Enable LLM exploration (Phase 5)
@@ -115,7 +139,33 @@ capture:
   viewport_height: 720
 
 output_dir: ./webprobe-runs
+
+source_analysis:
+  enabled: false
+  max_file_bytes: 1000000
+  exclude_dirs:
+    - .git
+    - node_modules
+    - .venv
+    - runs
+
+runtime_canary:
+  enabled: false
+  max_inputs: 50
+  concurrency: 4
+  methods: ["GET"]
 ```
+
+## Compliance Mapping
+
+Use `--compliance` to limit standards in the compliance summary:
+
+```bash
+webprobe --compliance SOC2,ISO,CJIS,HIPAA run https://your-site.com
+webprobe --compliance SOC2,ISO,CJIS,HIPPA scan-repo /path/to/repo
+```
+
+Bundled mappings include OWASP Top 10, ISO 27001:2022, SOC 2, HIPAA, CJIS, PCI DSS, NIST CSF, FedRAMP, GDPR/CCPA, and related privacy/security frameworks. These mappings identify tell-tale evidence and review gaps; they are not a compliance certification or legal determination.
 
 ## Mask File
 

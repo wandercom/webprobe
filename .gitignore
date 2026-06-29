@@ -5,6 +5,7 @@ dist/
 build/
 .eggs/
 webprobe-runs/
+runs/
 .pact/implementations/
 .pact/test-gen/
 .constrain/

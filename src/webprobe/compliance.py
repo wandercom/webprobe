@@ -27,6 +27,13 @@ _SEVERITY_ORDER = {
     "info": 4,
 }
 
+_SUPPORTED_MATCHER_FIELDS = {"category", "title_pattern"}
+SOURCE_METADATA_IGNORED_REASON = (
+    "source_path/source_line/source_column/rule_id/confidence/source_context "
+    "are evidence metadata; compliance mapping v1 intentionally matches only "
+    "category and title_pattern until source-aware control selectors are added."
+)
+
 
 def load_mappings(
     path: str | Path | None = None,
@@ -89,6 +96,11 @@ def _matches_finding(finding: SecurityFinding, matcher: dict) -> bool:
     ``finding.category.value``) and an optional ``title_pattern`` (regex
     matched against ``finding.title``).
     """
+    # Explicit C007 handling: source-only fields may be present on static
+    # findings, but v1 compliance matchers ignore them for the reason captured
+    # in SOURCE_METADATA_IGNORED_REASON.
+    _ = SOURCE_METADATA_IGNORED_REASON
+
     matcher_category = matcher.get("category", "")
     if finding.category.value != matcher_category:
         return False
@@ -103,6 +115,11 @@ def _matches_finding(finding: SecurityFinding, matcher: dict) -> bool:
             return False
 
     return True
+
+
+def _unsupported_matcher_fields(matcher: dict) -> list[str]:
+    """Return matcher keys ignored by v1 compliance matching."""
+    return sorted(set(matcher) - _SUPPORTED_MATCHER_FIELDS)
 
 
 def _worse_severity(current: str, candidate: str) -> str:
@@ -179,6 +196,15 @@ def annotate_findings(
             if testable != "no":
                 for finding in findings:
                     for matcher in matchers:
+                        unsupported = _unsupported_matcher_fields(matcher)
+                        if unsupported:
+                            logger.info(
+                                "Ignoring unsupported compliance matcher fields %s for %s:%s. Reason: %s",
+                                unsupported,
+                                std_key,
+                                ctrl_id,
+                                SOURCE_METADATA_IGNORED_REASON,
+                            )
                         if _matches_finding(finding, matcher):
                             fid = id(finding)
                             if fid not in seen_finding_ids:

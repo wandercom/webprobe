@@ -11,7 +11,7 @@ from pathlib import Path
 import click
 import yaml
 
-from webprobe.config import load_config, WebprobeConfig
+from webprobe.config import load_config, normalize_compliance_standards, WebprobeConfig
 
 
 def _now_iso() -> str:
@@ -21,17 +21,51 @@ def _now_iso() -> str:
 @click.group()
 @click.option("--config", "config_path", type=click.Path(exists=False), default=None,
               help="Path to webprobe.yaml config file.")
+@click.option("--compliance", "compliance_standards", default=None,
+              help="Comma-separated standards to map findings to (e.g. SOC2,ISO,CJIS,HIPAA). Use 'none' to disable.")
 @click.pass_context
-def main(ctx: click.Context, config_path: str | None) -> None:
+def main(ctx: click.Context, config_path: str | None, compliance_standards: str | None) -> None:
     """webprobe -- Generic site state-graph auditor."""
     ctx.ensure_object(dict)
-    ctx.obj["config"] = load_config(config_path)
+    config = load_config(config_path)
+    if compliance_standards:
+        if compliance_standards.strip().lower() in {"none", "off", "false", "disabled"}:
+            config.compliance.enabled = False
+        else:
+            try:
+                config.compliance.enabled = True
+                config.compliance.standards = normalize_compliance_standards(compliance_standards)
+            except ValueError as exc:
+                raise click.BadParameter(str(exc), param_hint="--compliance") from exc
+    ctx.obj["config"] = config
+
+
+def _apply_compliance(config: WebprobeConfig, findings: list):
+    """Annotate findings with configured compliance mappings."""
+    if not config.compliance.enabled:
+        return None
+    from webprobe.compliance import annotate_findings, load_mappings
+
+    mappings = load_mappings(custom_path=config.compliance.custom_mappings_path)
+    enabled = [s for s in config.compliance.standards if s not in config.compliance.skip_standards]
+    return annotate_findings(findings, mappings, enabled)
+
+
+def _finding_counts(findings: list) -> str:
+    by_sev: dict[str, int] = {}
+    for finding in findings:
+        by_sev[finding.severity.value] = by_sev.get(finding.severity.value, 0) + 1
+    return ", ".join(f"{v} {k}" for k, v in sorted(by_sev.items())) if by_sev else "0"
 
 
 @main.command()
 @click.argument("url")
 @click.option("--project-root", type=click.Path(exists=True), default=None,
               help="Project root for framework route detection.")
+@click.option("--source-scan", is_flag=True, default=False,
+              help="Run repository/source analysis against --project-root and merge findings into the report.")
+@click.option("--canary-probe", is_flag=True, default=False,
+              help="Send safe runtime canary values through discovered GET inputs.")
 @click.option("--output-dir", type=click.Path(), default=None,
               help="Output directory for runs.")
 @click.option("--concurrency", type=int, default=None,
@@ -55,9 +89,10 @@ def main(ctx: click.Context, config_path: str | None) -> None:
 @click.option("--advocate-cost-limit", type=float, default=5.0,
               help="Cost limit in USD for advocate phase.")
 @click.pass_context
-def run(ctx: click.Context, url: str, project_root: str | None, output_dir: str | None,
-        concurrency: int | None, explore: bool, llm_provider: str, llm_model: str | None,
-        agents: int, mask_path: str | None, render_js: bool, advocate: bool,
+def run(ctx: click.Context, url: str, project_root: str | None, source_scan: bool,
+        canary_probe: bool, output_dir: str | None, concurrency: int | None,
+        explore: bool, llm_provider: str, llm_model: str | None, agents: int,
+        mask_path: str | None, render_js: bool, advocate: bool,
         advocate_roles: str | None, advocate_model: str | None,
         advocate_cost_limit: float) -> None:
     """Run all phases: map, capture, analyze, report (+ explore with --explore, + advocate with --advocate)."""
@@ -122,6 +157,56 @@ def run(ctx: click.Context, url: str, project_root: str | None, output_dir: str 
                 by_sev[sf.severity.value] = by_sev.get(sf.severity.value, 0) + 1
             parts = [f"{v} {k}" for k, v in sorted(by_sev.items())]
             click.echo(f"  Security findings: {len(analysis_result.security_findings)} ({', '.join(parts)})")
+
+        # Phase 3b: Source analysis (optional, but reports as a first-class phase)
+        configured_source_scan = getattr(getattr(config, "source_analysis", None), "enabled", False) is True
+        do_source_scan = source_scan or configured_source_scan
+        if do_source_scan:
+            if not project_root:
+                raise click.ClickException("--source-scan requires --project-root PATH")
+            from webprobe.source_analysis import scan_repository
+
+            click.echo(f"Phase 3b: Source scanning {project_root}...")
+            source_result, source_phase = scan_repository(project_root, config.source_analysis)
+            run_obj.source_analysis = source_result
+            run_obj.phases.append(source_phase)
+            (run_dir / "source-analysis.json").write_text(source_result.model_dump_json(indent=2))
+            if run_obj.analysis:
+                run_obj.analysis.security_findings.extend(source_result.findings)
+                run_obj.analysis.compliance = _apply_compliance(
+                    config, run_obj.analysis.security_findings
+                )
+                (run_dir / "analysis.json").write_text(run_obj.analysis.model_dump_json(indent=2))
+            click.echo(
+                f"  {source_result.scanned_files} files, {source_result.total_lines} lines, "
+                f"{len(source_result.findings)} findings ({source_phase.duration_ms:.0f} ms)"
+            )
+            if source_result.findings:
+                click.echo(f"  Source findings: {len(source_result.findings)} ({_finding_counts(source_result.findings)})")
+
+        # Phase 3c: Runtime canary probing (optional active GET-only probe)
+        configured_canary_probe = getattr(getattr(config, "runtime_canary", None), "enabled", False) is True
+        do_canary_probe = canary_probe or configured_canary_probe
+        if do_canary_probe:
+            from webprobe.runtime_canary import probe_runtime_canaries
+
+            click.echo("Phase 3c: Runtime canary probing...")
+            canary_result, canary_phase = await probe_runtime_canaries(graph, config)
+            run_obj.runtime_canary = canary_result
+            run_obj.phases.append(canary_phase)
+            (run_dir / "runtime-canary.json").write_text(canary_result.model_dump_json(indent=2))
+            if run_obj.analysis:
+                run_obj.analysis.security_findings.extend(canary_result.findings)
+                run_obj.analysis.compliance = _apply_compliance(
+                    config, run_obj.analysis.security_findings
+                )
+                (run_dir / "analysis.json").write_text(run_obj.analysis.model_dump_json(indent=2))
+            click.echo(
+                f"  {canary_result.discovered_inputs} inputs, {canary_result.requests_sent} requests, "
+                f"{len(canary_result.findings)} findings ({canary_phase.duration_ms:.0f} ms)"
+            )
+            if canary_result.findings:
+                click.echo(f"  Canary findings: {len(canary_result.findings)} ({_finding_counts(canary_result.findings)})")
 
         # Phase 5: Explore (optional)
         do_explore = explore
@@ -204,6 +289,101 @@ def run(ctx: click.Context, url: str, project_root: str | None, output_dir: str 
         click.echo(f"JSON:   {run_dir / 'report.json'}")
 
     asyncio.run(_run())
+
+
+@main.command("scan-repo")
+@click.argument("path", type=click.Path(exists=True, file_okay=False, dir_okay=True))
+@click.option("--output-dir", type=click.Path(), default=None,
+              help="Output directory for repository scan runs.")
+@click.pass_context
+def scan_repo_cmd(ctx: click.Context, path: str, output_dir: str | None) -> None:
+    """Scan a repository/source tree without crawling a live site."""
+    config: WebprobeConfig = ctx.obj["config"]
+
+    from webprobe.models import AnalysisResult, Run
+    from webprobe.reporter import generate_report
+    from webprobe.source_analysis import scan_repository
+
+    root = Path(path).expanduser().resolve()
+    run_obj = Run(
+        url=f"repo:{root}",
+        started_at=_now_iso(),
+        config_snapshot=config.model_dump(),
+    )
+    run_dir = Path(output_dir or config.output_dir) / run_obj.run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    click.echo(f"Source scanning {root}...")
+    source_result, source_phase = scan_repository(root, config.source_analysis)
+    run_obj.source_analysis = source_result
+    run_obj.phases.append(source_phase)
+    (run_dir / "source-analysis.json").write_text(source_result.model_dump_json(indent=2))
+
+    analysis = AnalysisResult(security_findings=list(source_result.findings))
+    analysis.compliance = _apply_compliance(config, analysis.security_findings)
+    run_obj.analysis = analysis
+    (run_dir / "analysis.json").write_text(analysis.model_dump_json(indent=2))
+
+    run_obj.completed_at = _now_iso()
+    report_phase = generate_report(run_obj, run_dir)
+    run_obj.phases.append(report_phase)
+    # Regenerate after appending report phase so JSON/HTML include it.
+    generate_report(run_obj, run_dir)
+
+    click.echo(
+        f"  {source_result.scanned_files} files, {source_result.total_lines} lines, "
+        f"{len(source_result.findings)} findings ({source_phase.duration_ms:.0f} ms)"
+    )
+    if source_result.findings:
+        click.echo(f"  Findings: {len(source_result.findings)} ({_finding_counts(source_result.findings)})")
+    click.echo(f"\nReport: {run_dir / 'report.html'}")
+    click.echo(f"JSON:   {run_dir / 'report.json'}")
+
+
+@main.command("canary")
+@click.argument("run_dir", type=click.Path(exists=True))
+@click.pass_context
+def canary_cmd(ctx: click.Context, run_dir: str) -> None:
+    """Probe discovered GET inputs in an existing run with harmless canary values."""
+    config: WebprobeConfig = ctx.obj["config"]
+
+    async def _canary() -> None:
+        from webprobe.differ import load_run
+        from webprobe.models import AnalysisResult, Run, SiteGraph
+        from webprobe.reporter import generate_report
+        from webprobe.runtime_canary import probe_runtime_canaries
+
+        rd = Path(run_dir)
+        if (rd / "report.json").exists():
+            run_obj = load_run(rd)
+        elif (rd / "graph.json").exists():
+            graph = SiteGraph.model_validate_json((rd / "graph.json").read_text())
+            run_obj = Run(url=graph.root_url or next(iter(graph.nodes), ""), graph=graph, started_at=_now_iso())
+        else:
+            raise click.ClickException(f"No graph.json or report.json in {rd}")
+
+        click.echo("Runtime canary probing...")
+        canary_result, canary_phase = await probe_runtime_canaries(run_obj.graph, config)
+        run_obj.runtime_canary = canary_result
+        run_obj.phases.append(canary_phase)
+        (rd / "runtime-canary.json").write_text(canary_result.model_dump_json(indent=2))
+
+        if run_obj.analysis is None:
+            run_obj.analysis = AnalysisResult()
+        run_obj.analysis.security_findings.extend(canary_result.findings)
+        run_obj.analysis.compliance = _apply_compliance(config, run_obj.analysis.security_findings)
+        (rd / "analysis.json").write_text(run_obj.analysis.model_dump_json(indent=2))
+
+        generate_report(run_obj, rd)
+        click.echo(
+            f"  {canary_result.discovered_inputs} inputs, {canary_result.requests_sent} requests, "
+            f"{len(canary_result.findings)} findings ({canary_phase.duration_ms:.0f} ms)"
+        )
+        if canary_result.findings:
+            click.echo(f"  Findings: {len(canary_result.findings)} ({_finding_counts(canary_result.findings)})")
+        click.echo(f"Report updated: {rd / 'report.html'}")
+
+    asyncio.run(_canary())
 
 
 @main.command("explore")
@@ -379,11 +559,13 @@ def capture(ctx: click.Context, run_dir: str) -> None:
 
 @main.command()
 @click.argument("run_dir", type=click.Path(exists=True))
-def analyze_cmd(run_dir: str) -> None:
+@click.pass_context
+def analyze_cmd(ctx: click.Context, run_dir: str) -> None:
     """Phase 3 only: Analyze an existing run."""
     from webprobe.analyzer import analyze
     from webprobe.reporter import generate_report
 
+    config: WebprobeConfig = ctx.obj["config"]
     rd = Path(run_dir)
 
     # Try loading from complete run first, fall back to graph.json for partial runs
@@ -399,7 +581,7 @@ def analyze_cmd(run_dir: str) -> None:
         raise click.ClickException(f"No graph.json or report.json in {rd}")
 
     click.echo("Analyzing...")
-    result, phase = analyze(graph)
+    result, phase = analyze(graph, config)
     (rd / "analysis.json").write_text(result.model_dump_json(indent=2))
 
     m = result.graph_metrics

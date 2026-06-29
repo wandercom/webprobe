@@ -154,6 +154,11 @@ class SecurityCategory(str, Enum):
     supply_chain = "supply_chain"
     sensitive_files = "sensitive_files"
     advocate = "advocate"
+    secrets = "secrets"
+    cryptography = "cryptography"
+    authorization = "authorization"
+    ai_injection = "ai_injection"
+    source_analysis = "source_analysis"
 
 
 class ComplianceViolation(BaseModel):
@@ -179,6 +184,13 @@ class SecurityFinding(BaseModel):
     affected_urls: list[str] = Field(default_factory=list)
     affected_count: int = 0
     compliance_violations: list[ComplianceViolation] = Field(default_factory=list)
+    source_path: str = ""
+    source_line: int | None = None
+    source_column: int | None = None
+    source_excerpt: str = ""
+    rule_id: str = ""
+    confidence: str = ""
+    source_context: dict[str, str] = Field(default_factory=dict)
 
 
 class NodeCapture(BaseModel):
@@ -333,6 +345,44 @@ class ComplianceSummary(BaseModel):
     untestable_controls: list[ComplianceControlSummary] = Field(default_factory=list)
 
 
+class SourceAnalysisResult(BaseModel):
+    """Static/source scan output for repository analysis."""
+
+    root_path: str = ""
+    scanned_files: int = 0
+    skipped_files: int = 0
+    total_lines: int = 0
+    findings: list[SecurityFinding] = Field(default_factory=list)
+
+
+class RuntimeCanaryObservation(BaseModel):
+    """One runtime canary input probe observation."""
+
+    method: str = "GET"
+    url: str = ""
+    input_name: str = ""
+    source_url: str = ""
+    source_kind: str = ""  # link_query or form_get
+    status_code: int | None = None
+    reflected: bool = False
+    reflection_contexts: list[str] = Field(default_factory=list)
+    redirected: bool = False
+    location: str = ""
+    error: str = ""
+
+
+class RuntimeCanaryResult(BaseModel):
+    """Runtime canary probe output for live input analysis."""
+
+    target_url: str = ""
+    canary_prefix: str = ""
+    discovered_inputs: int = 0
+    requests_sent: int = 0
+    skipped_inputs: int = 0
+    observations: list[RuntimeCanaryObservation] = Field(default_factory=list)
+    findings: list[SecurityFinding] = Field(default_factory=list)
+
+
 class AnalysisResult(BaseModel):
     """Results from Phase 3 graph analysis."""
 
@@ -356,7 +406,7 @@ def _make_run_id() -> str:
 class PhaseStatus(BaseModel):
     """Status of a single phase execution."""
 
-    phase: Literal["map", "capture", "analyze", "report", "explore", "advocate"]
+    phase: Literal["map", "capture", "analyze", "report", "explore", "advocate", "source_scan", "runtime_probe"]
     status: Literal["pending", "running", "completed", "failed"] = "pending"
     started_at: str | None = None
     completed_at: str | None = None
@@ -386,6 +436,8 @@ class Run(BaseModel):
     phases: list[PhaseStatus] = Field(default_factory=list)
     graph: SiteGraph = Field(default_factory=SiteGraph)
     analysis: AnalysisResult | None = None
+    source_analysis: SourceAnalysisResult | None = None
+    runtime_canary: RuntimeCanaryResult | None = None
     explore_cost: CostSummary | None = None
     advocate_cost: CostSummary | None = None
 

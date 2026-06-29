@@ -193,12 +193,14 @@ class TestEnums:
         """Test SecurityCategory enum has all expected values"""
         expected = ['headers', 'cookies', 'xss', 'mixed_content', 'cors',
                    'information_disclosure', 'forms', 'tls',
-                   'accessibility', 'visual', 'exploration']
+                   'accessibility', 'visual', 'exploration',
+                   'secrets', 'cryptography', 'authorization',
+                   'ai_injection', 'source_analysis']
 
         for variant in expected:
             assert hasattr(SecurityCategory, variant), f"Should have '{variant}' variant"
 
-        assert len(list(SecurityCategory)) == 17, "Should have exactly 17 variants"
+        assert len(list(SecurityCategory)) == 22, "Should have exactly 22 variants"
 
 
 # ============================================================================

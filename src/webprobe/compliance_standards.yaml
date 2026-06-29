@@ -21,6 +21,7 @@ standards:
           - category: "headers"
             title_pattern: ".*X-Frame-Options.*"
           - category: "sensitive_files"
+          - category: "authorization"
         manual_notes: "Full access control testing requires authenticated role-based testing with multiple user roles."
 
       - id: "A02"
@@ -35,6 +36,8 @@ standards:
             title_pattern: ".*Strict-Transport-Security.*"
           - category: "headers"
             title_pattern: ".*HSTS.*"
+          - category: "cryptography"
+          - category: "secrets"
         manual_notes: "Cannot test server-side encryption at rest, key management, or password hashing algorithms."
 
       - id: "A03"
@@ -50,6 +53,7 @@ standards:
             title_pattern: ".*unsafe-eval.*"
           - category: "forms"
             title_pattern: ".*CSRF.*"
+          - category: "ai_injection"
         manual_notes: "Passive scanning detects indicators only. Active injection testing (SQLi, command injection) requires authenticated fuzzing."
 
       - id: "A04"
@@ -75,6 +79,8 @@ standards:
           - category: "cookies"
             title_pattern: ".*SameSite.*"
           - category: "sensitive_files"
+          - category: "secrets"
+          - category: "source_analysis"
         manual_notes: ""
 
       - id: "A06"
@@ -265,6 +271,8 @@ standards:
             title_pattern: ".*Strict-Transport-Security.*"
           - category: "headers"
             title_pattern: ".*HSTS.*"
+          - category: "cryptography"
+          - category: "secrets"
         manual_notes: "Key management, encryption at rest, and cryptographic policy require server-side and organizational review."
 
       - id: "A.8.26"
@@ -279,6 +287,8 @@ standards:
             title_pattern: ".*Content-Security-Policy.*"
           - category: "cors"
           - category: "auth_session"
+          - category: "authorization"
+          - category: "ai_injection"
         manual_notes: "Secure development lifecycle, code review processes, and security testing integration require organizational audit."
 
       - id: "A.8.12"
@@ -287,6 +297,7 @@ standards:
         finding_matchers:
           - category: "information_disclosure"
           - category: "sensitive_files"
+          - category: "secrets"
           - category: "headers"
             title_pattern: ".*Referrer-Policy.*"
           - category: "privacy"
@@ -327,6 +338,9 @@ standards:
             title_pattern: ".*Stack trace.*"
           - category: "information_disclosure"
             title_pattern: ".*source map.*"
+          - category: "authorization"
+          - category: "cryptography"
+          - category: "ai_injection"
         manual_notes: "Secure coding practices, SAST integration, and peer review require development process audit."
 
   # ---------------------------------------------------------------------------
@@ -446,6 +460,7 @@ standards:
           - category: "headers"
             title_pattern: ".*clickjacking.*"
           - category: "sensitive_files"
+          - category: "authorization"
         manual_notes: "Unique user IDs, emergency access, automatic logoff timeout, and role-based access require application-level audit."
 
       - id: "164.312(a)(2)(i)"
@@ -535,6 +550,7 @@ standards:
           - category: "headers"
             title_pattern: ".*clickjacking.*"
           - category: "sensitive_files"
+          - category: "authorization"
         manual_notes: "Physical access, identity provisioning, and access review processes require organizational audit."
 
       - id: "CC6.6"
@@ -547,6 +563,9 @@ standards:
           - category: "xss"
           - category: "injection"
           - category: "mixed_content"
+          - category: "cryptography"
+          - category: "ai_injection"
+          - category: "source_analysis"
         manual_notes: "Firewall rules, IDS/IPS, and network segmentation require infrastructure assessment."
 
       - id: "CC6.7"
@@ -1059,6 +1078,7 @@ standards:
             title_pattern: ".*HttpOnly.*"
           - category: "cors"
           - category: "sensitive_files"
+          - category: "authorization"
         manual_notes: "Full access control testing requires multi-role authenticated sessions and RBAC verification."
 
       - id: "5.10.1.3"
@@ -1088,6 +1108,8 @@ standards:
             title_pattern: ".*HSTS.*"
           - category: "cookies"
             title_pattern: ".*missing Secure flag.*"
+          - category: "cryptography"
+          - category: "secrets"
         manual_notes: "FIPS 140-2 validation, key management, and encryption at rest require server-side audit."
 
       - id: "5.13.2"

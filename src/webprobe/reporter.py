@@ -114,6 +114,26 @@ HTML_TEMPLATE = Template("""\
     <div class="label">Security Findings</div>
     <div class="value {{ 'red' if analysis.security_findings|selectattr('severity', 'equalto', 'critical')|list or analysis.security_findings|selectattr('severity', 'equalto', 'high')|list else 'yellow' if analysis.security_findings else 'green' }}">{{ analysis.security_findings|length }}</div>
   </div>
+  {% if source_analysis %}
+  <div class="card">
+    <div class="label">Source Files</div>
+    <div class="value">{{ source_analysis.scanned_files }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Source Findings</div>
+    <div class="value {{ 'red' if source_analysis.findings|selectattr('severity', 'equalto', 'critical')|list or source_analysis.findings|selectattr('severity', 'equalto', 'high')|list else 'yellow' if source_analysis.findings else 'green' }}">{{ source_analysis.findings|length }}</div>
+  </div>
+  {% endif %}
+  {% if runtime_canary %}
+  <div class="card">
+    <div class="label">Canary Inputs</div>
+    <div class="value">{{ runtime_canary.discovered_inputs }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Canary Findings</div>
+    <div class="value {{ 'red' if runtime_canary.findings|selectattr('severity', 'equalto', 'critical')|list or runtime_canary.findings|selectattr('severity', 'equalto', 'high')|list else 'yellow' if runtime_canary.findings else 'green' }}">{{ runtime_canary.findings|length }}</div>
+  </div>
+  {% endif %}
 </div>
 {% endif %}
 
@@ -200,17 +220,77 @@ HTML_TEMPLATE = Template("""\
 <h2>Security Findings ({{ analysis.security_findings|length }})</h2>
 {% set sev_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3, 'info': 4} %}
 <table>
-  <tr><th>Severity</th><th>Category</th><th>Finding</th><th>URL</th><th>Detail</th></tr>
+  <tr><th>Severity</th><th>Category</th><th>Finding</th><th>Location</th><th>Detail</th></tr>
   {% for sf in analysis.security_findings|sort(attribute='severity') %}
   <tr>
     <td><span class="badge badge-{{ sf.severity }}">{{ sf.severity }}</span></td>
     <td>{{ sf.category }}</td>
     <td>{{ sf.title }}</td>
-    <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ sf.url }}</td>
+    <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+      {% if sf.source_path %}{{ sf.source_path }}{% if sf.source_line %}:{{ sf.source_line }}{% endif %}{% else %}{{ sf.url }}{% endif %}
+    </td>
     <td>{{ sf.detail }}{% if sf.evidence %}<br><code style="font-size:0.8rem;color:#8b949e;">{{ sf.evidence[:120] }}</code>{% endif %}</td>
   </tr>
   {% endfor %}
 </table>
+{% endif %}
+
+{% if source_analysis %}
+<h2>Source Analysis</h2>
+<div class="summary">
+  <div class="card">
+    <div class="label">Root</div>
+    <div class="value" style="font-size:1rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ source_analysis.root_path }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Scanned Files</div>
+    <div class="value">{{ source_analysis.scanned_files }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Lines</div>
+    <div class="value">{{ source_analysis.total_lines }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Skipped Files</div>
+    <div class="value">{{ source_analysis.skipped_files }}</div>
+  </div>
+</div>
+{% endif %}
+
+{% if runtime_canary %}
+<h2>Runtime Canary Probing</h2>
+<div class="summary">
+  <div class="card">
+    <div class="label">Target</div>
+    <div class="value" style="font-size:1rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ runtime_canary.target_url }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Inputs</div>
+    <div class="value">{{ runtime_canary.discovered_inputs }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Requests</div>
+    <div class="value">{{ runtime_canary.requests_sent }}</div>
+  </div>
+  <div class="card">
+    <div class="label">Skipped</div>
+    <div class="value">{{ runtime_canary.skipped_inputs }}</div>
+  </div>
+</div>
+{% if runtime_canary.observations %}
+<table>
+  <tr><th>Input</th><th>Status</th><th>Reflected</th><th>Contexts</th><th>URL</th></tr>
+  {% for obs in runtime_canary.observations %}
+  <tr>
+    <td>{{ obs.input_name }}</td>
+    <td>{{ obs.status_code or obs.error or '—' }}</td>
+    <td>{{ 'yes' if obs.reflected else 'no' }}</td>
+    <td>{{ ', '.join(obs.reflection_contexts) }}</td>
+    <td style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ obs.url }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
 {% endif %}
 
 {% if analysis and analysis.compliance %}
@@ -425,6 +505,25 @@ HTML_TEMPLATE = Template("""\
 """)
 
 
+def _source_analysis_for_template(run: Run):
+    """Return source analysis only when it has the real iterable shape."""
+    source_analysis = getattr(run, "source_analysis", None)
+    findings = getattr(source_analysis, "findings", None)
+    if isinstance(findings, list):
+        return source_analysis
+    return None
+
+
+def _runtime_canary_for_template(run: Run):
+    """Return runtime canary data only when it has the real iterable shape."""
+    runtime_canary = getattr(run, "runtime_canary", None)
+    observations = getattr(runtime_canary, "observations", None)
+    findings = getattr(runtime_canary, "findings", None)
+    if isinstance(observations, list) and isinstance(findings, list):
+        return runtime_canary
+    return None
+
+
 def generate_report(
     run: Run,
     run_dir: Path,
@@ -452,6 +551,8 @@ def generate_report(
             run=run,
             analysis=run.analysis,
             nodes=nodes,
+            source_analysis=_source_analysis_for_template(run),
+            runtime_canary=_runtime_canary_for_template(run),
             version=__version__,
         )
         html_path = run_dir / "report.html"
