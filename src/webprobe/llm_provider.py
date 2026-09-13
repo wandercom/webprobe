@@ -167,8 +167,8 @@ class AnthropicProvider(LLMProvider):
 
     async def vision(self, system: str, prompt: str, image_path: str | Path, max_tokens: int = 4096) -> str:
         import anthropic
-        client = anthropic.AsyncAnthropic()
         b64 = _load_image_b64(image_path)
+        client = anthropic.AsyncAnthropic()
         start = time.monotonic()
         response = await client.messages.create(
             model=self.model,
@@ -211,8 +211,8 @@ class OpenAIProvider(LLMProvider):
 
     async def vision(self, system: str, prompt: str, image_path: str | Path, max_tokens: int = 4096) -> str:
         from openai import AsyncOpenAI
-        client = AsyncOpenAI()
         b64 = _load_image_b64(image_path)
+        client = AsyncOpenAI()
         start = time.monotonic()
         response = await client.chat.completions.create(
             model=self.model,
@@ -264,8 +264,8 @@ class GeminiProvider(LLMProvider):
     async def vision(self, system: str, prompt: str, image_path: str | Path, max_tokens: int = 4096) -> str:
         from google import genai
         from google.genai.types import Part
-        client = genai.Client()
         image_bytes = Path(image_path).read_bytes()
+        client = genai.Client()
         start = time.monotonic()
         response = await client.aio.models.generate_content(
             model=self.model,
@@ -312,8 +312,8 @@ class ApprenticeProvider(LLMProvider):
     async def vision(self, system: str, prompt: str, image_path: str | Path, max_tokens: int = 4096) -> str:
         # Apprentice vision support -- fall back to frontier for vision tasks
         from openai import AsyncOpenAI
-        client = AsyncOpenAI(base_url="http://localhost:8741/v1")
         b64 = _load_image_b64(image_path)
+        client = AsyncOpenAI(base_url="http://localhost:8741/v1")
         start = time.monotonic()
         response = await client.chat.completions.create(
             model=self.model,
