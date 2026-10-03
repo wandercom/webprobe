@@ -15,3 +15,4 @@ runs/
 src/src_webprobe_*/
 contracts/src_webprobe_*/
 tests/src_webprobe_*/contract_test_suite.json
+.pact/state.json
